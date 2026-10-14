@@ -49,6 +49,17 @@
   .stat { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
   .stat b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 12px; color: var(--muted); }
+  #breakdown { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  #breakdown summary { cursor: pointer; font-weight: 600; }
+  #breakdown dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 8px 0; font-size: 13px; }
+  #breakdown dt { color: var(--muted); }
+  #breakdown dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  #breakdown .tbl { max-height: 240px; overflow-y: auto; }
+  #breakdown table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #breakdown th, #breakdown td { padding: 3px 4px; border-bottom: 1px solid var(--border); text-align: right; }
+  #breakdown th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+  #breakdown th:first-child, #breakdown td:first-child { text-align: left; }
+  #breakdown tfoot td { font-weight: 600; border-top: 2px solid var(--border); border-bottom: 0; }
   #status { font-size: 13px; min-height: 1.5em; color: var(--muted); }
   #status.err { color: var(--danger); }
   ol#points { margin: 0; padding-left: 22px; max-height: 220px; overflow-y: auto;
@@ -105,9 +116,13 @@
     <label for="server">OSRM server</label>
     <select id="server">
       <option value="https://router.project-osrm.org">router.project-osrm.org (demo, รถยนต์เท่านั้น)</option>
-      <option value="https://routing.openstreetmap.de/routed-{profile}">routing.openstreetmap.de (รถ/จักรยาน/เดิน)</option>
-      <option value="http://localhost:5000">localhost:5000 (self-host)</option>
-    </select>
+      <option value="https://routing.openstreetmap.de/routed-{profile}">routing.openstreetmap.de (รถ/จักรยาน/เดิน)</option>    </select>
+  </div>
+
+  <div>
+    <button id="importBtn" style="width:100%">📂 Import CSV (lat,lon)</button>
+    <input id="importFile" type="file" accept=".csv,.txt,text/csv" hidden>
+    <p class="hint" style="margin-top:4px">หรือลากไฟล์ CSV มาวางบนแผนที่ · ใช้ header ชื่อ lat/lon หรือไม่มี header ก็ได้ (คอลัมน์ 1 = lat, 2 = lon)</p>
   </div>
 
   <div class="row">
@@ -124,6 +139,12 @@
     <div class="stat"><b id="sOut">0</b><span>จุดบนเส้นทาง</span></div>
   </div>
 
+  <details id="breakdown" open hidden>
+    <summary>สรุประยะทาง</summary>
+    <dl id="bdSummary"></dl>
+    <div class="tbl"><table id="bdLegs"></table></div>
+  </details>
+
   <div class="row">
     <button id="exportRoute" class="primary" disabled>Export เส้นทาง CSV</button>
     <button id="exportInput" disabled>Export จุดที่คลิก CSV</button>
@@ -138,6 +159,7 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="csv-import.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 
@@ -152,9 +174,10 @@ let routeCoords = [];   // [[lat, lon], ...] from OSRM
 let routeLayer = null;
 let reqId = 0;
 let timer = null;
+let importNote = '';    // shown in front of the status until the points are edited by hand
 
 // ---------- points ----------
-function addPoint(latlng) {
+function addPoint(latlng, silent = false) {
   const marker = L.marker(latlng, { draggable: true }).addTo(map);
   const p = { lat: latlng.lat, lng: latlng.lng, marker };
   marker.on('dragend', e => {
@@ -164,7 +187,7 @@ function addPoint(latlng) {
   });
   marker.on('contextmenu', () => removePoint(p));
   points.push(p);
-  refresh();
+  if (!silent) refresh();
 }
 
 function removePoint(p) {
@@ -194,9 +217,43 @@ $('points').addEventListener('click', e => {
   if (i !== undefined) removePoint(points[+i]);
 });
 
-map.on('click', e => addPoint(e.latlng));
+map.on('click', e => { importNote = ''; addPoint(e.latlng); });
+
+// ---------- CSV import ----------
+async function importCsv(file) {
+  if (!file) return;
+  try {
+    const { points: rows, skipped, swapped } = await readLatLonCsvFile(file);
+    if (points.length && !confirm(`แทนที่ ${points.length} จุดเดิมด้วย ${rows.length} จุดจากไฟล์ ${file.name}?`)) return;
+    points.forEach(p => map.removeLayer(p.marker));
+    points = [];
+    rows.forEach(([lat, lon]) => addPoint(L.latLng(lat, lon), true));
+    refresh();
+    map.fitBounds(rows, { padding: [40, 40] });
+
+    const notes = [`Import ${rows.length} จุดจาก ${file.name}`];
+    if (skipped) notes.push(`ข้าม ${skipped} แถวที่อ่านไม่ได้`);
+    if (swapped) notes.push('สลับคอลัมน์ให้แล้ว (ไฟล์เป็น lon,lat)');
+    if (rows.length > 100 && $('mode').value === 'route') notes.push('จุดเยอะ ถ้าเป็น GPS log แนะนำโหมด Match');
+    importNote = notes.join(' · ');
+    setStatus('');
+  } catch (err) {
+    setStatus('Import ไม่สำเร็จ: ' + err.message, true);
+  }
+}
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = e => { importCsv(e.target.files[0]); e.target.value = ''; };
+const mapEl = $('map');
+mapEl.addEventListener('dragover', e => { e.preventDefault(); mapEl.style.outline = '3px dashed var(--accent)'; });
+mapEl.addEventListener('dragleave', () => mapEl.style.outline = '');
+mapEl.addEventListener('drop', e => {
+  e.preventDefault();
+  mapEl.style.outline = '';
+  importCsv(e.dataTransfer.files[0]);
+});
 $('undo').onclick = () => points.length && removePoint(points[points.length - 1]);
-$('clear').onclick = () => { points.forEach(p => map.removeLayer(p.marker)); points = []; refresh(); };
+$('clear').onclick = () => { importNote = ''; points.forEach(p => map.removeLayer(p.marker)); points = []; refresh(); };
 ['mode', 'profile', 'radius', 'server'].forEach(id => $(id).addEventListener('change', () => {
   $('radiusWrap').style.visibility = $('mode').value === 'match' ? 'visible' : 'hidden';
   scheduleRoute();
@@ -210,7 +267,7 @@ function scheduleRoute() {
 }
 
 function setStatus(msg, err = false) {
-  $('status').textContent = msg;
+  $('status').textContent = [importNote, msg].filter(Boolean).join(' · ');
   $('status').className = err ? 'err' : '';
 }
 
@@ -222,6 +279,7 @@ function clearRoute() {
   $('sTime').textContent = '–';
   $('sOut').textContent = 0;
   $('exportRoute').disabled = true;
+  $('breakdown').hidden = true;
 }
 
 function buildUrl() {
@@ -247,10 +305,8 @@ async function fetchRoute() {
     setStatus(points.length ? 'คลิกเพิ่มอีกอย่างน้อย 1 จุด' : 'ยังไม่มีจุด');
     return;
   }
-  // public servers cap /match at 100 coords; local docker-compose raises it to 1000
-  const maxMatch = $('server').value.includes('localhost') ? 1000 : 100;
-  if ($('mode').value === 'match' && points.length > maxMatch) {
-    setStatus(`โหมด match รองรับสูงสุด ${maxMatch} จุดต่อ request`, true);
+  if ($('mode').value === 'match' && points.length > 100) {
+    setStatus('โหมด match รองรับสูงสุด 100 จุดต่อ request', true);
     return;
   }
   const id = ++reqId;
@@ -274,10 +330,11 @@ async function fetchRoute() {
       weight: 5, opacity: .85
     }).addTo(map);
 
-    $('sDist').textContent = dist >= 1000 ? (dist / 1000).toFixed(2) + ' km' : Math.round(dist) + ' m';
+    $('sDist').textContent = fmtDist(dist);
     $('sTime').textContent = fmtDuration(dur);
     $('sOut').textContent = routeCoords.length;
     $('exportRoute').disabled = false;
+    renderBreakdown(data, legs, dist, dur);
 
     const note = data.matchings && data.matchings.length > 1
       ? ` (แยกเป็น ${data.matchings.length} ช่วง เพราะบางจุดต่อกันไม่ได้)` : '';
@@ -287,6 +344,65 @@ async function fetchRoute() {
     clearRoute();
     setStatus('OSRM error: ' + err.message, true);
   }
+}
+
+function fmtDist(m) {
+  return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+}
+
+// Sum of great-circle distances along a [[lat, lon], ...] path
+function pathLength(coords) {
+  let d = 0;
+  for (let i = 1; i < coords.length; i++) d += haversine(coords[i - 1], coords[i]);
+  return d;
+}
+
+function renderBreakdown(data, parts, roadDist, dur) {
+  // Haversine is summed per route/matching so gaps between matchings are not counted
+  const geomDist = parts.reduce((s, r) =>
+    s + pathLength(r.geometry.coordinates.map(([lon, lat]) => [lat, lon])), 0);
+  const clicked = points.map(p => [p.lat, p.lng]);
+
+  // Map each leg to the clicked points it connects. /route: waypoint i = point i.
+  // /match: unmatched points (tracepoint null) are skipped, so collect indices per matching.
+  const legRows = [];
+  if (data.routes) {
+    data.routes[0].legs.forEach((l, i) => legRows.push({ l, a: i, b: i + 1 }));
+  } else {
+    data.matchings.forEach((m, mi) => {
+      const idx = data.tracepoints
+        .map((t, i) => t && t.matchings_index === mi ? { i, w: t.waypoint_index } : null)
+        .filter(Boolean).sort((x, y) => x.w - y.w).map(x => x.i);
+      m.legs.forEach((l, k) => legRows.push({ l, a: idx[k], b: idx[k + 1] }));
+    });
+  }
+
+  let cum = 0, sumStraight = 0;
+  const body = legRows.map(({ l, a, b }) => {
+    cum += l.distance;
+    const s = a != null && b != null ? haversine(clicked[a], clicked[b]) : null;
+    if (s != null) sumStraight += s;
+    return `<tr><td>${a + 1}→${b + 1}</td><td>${fmtDist(l.distance)}</td><td>${fmtDuration(l.duration)}</td>` +
+      `<td>${s == null ? '–' : fmtDist(s)}</td><td>${fmtDist(cum)}</td></tr>`;
+  }).join('');
+  $('bdLegs').innerHTML =
+    '<thead><tr><th>ช่วง</th><th>ถนน</th><th>เวลา</th><th>เส้นตรง</th><th>สะสม</th></tr></thead>' +
+    `<tbody>${body}</tbody>` +
+    `<tfoot><tr><td>รวม</td><td>${fmtDist(cum)}</td><td>${fmtDuration(dur)}</td><td>${fmtDist(sumStraight)}</td><td></td></tr></tfoot>`;
+
+  // Straight-line distance only over legs that have a road route, so unmatched points don't skew the ratio
+  const diff = roadDist ? (geomDist - roadDist) / roadDist * 100 : 0;
+  const unmatched = data.tracepoints ? data.tracepoints.filter(t => !t).length : 0;
+  const rows = [
+    ['ระยะทางตามถนน (OSRM)', `<b>${fmtDist(roadDist)}</b>`],
+    [`คำนวณจากพิกัดเส้นทาง (Haversine, ${routeCoords.length} จุด)`, `${fmtDist(geomDist)} <span style="color:var(--muted)">(${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%)</span>`],
+    [`ระยะเส้นตรงระหว่างจุด (${legRows.length} ช่วง)`, fmtDist(sumStraight)],
+    ['อัตราอ้อม (ถนน ÷ เส้นตรง)', sumStraight ? '×' + (roadDist / sumStraight).toFixed(2) : '–'],
+    ['ความเร็วเฉลี่ย', dur ? (roadDist / dur * 3.6).toFixed(1) + ' km/h' : '–'],
+  ];
+  if (unmatched) rows.push(['จุดที่ match กับถนนไม่ได้', `<span style="color:var(--danger)">${unmatched} จุด</span>`]);
+  $('bdSummary').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  $('breakdown').hidden = false;
 }
 
 function fmtDuration(s) {

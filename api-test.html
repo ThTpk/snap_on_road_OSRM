@@ -98,7 +98,6 @@
   <div>
     <label for="server">Server</label>
     <select id="server">
-      <option value="http://localhost:5000">localhost:5000 (self-host)</option>
       <option value="https://router.project-osrm.org">router.project-osrm.org (demo)</option>
       <option value="https://routing.openstreetmap.de/routed-car">routing.openstreetmap.de/routed-car</option>
       <option value="https://routing.openstreetmap.de/routed-bike">routing.openstreetmap.de/routed-bike</option>
@@ -135,6 +134,8 @@
     <textarea id="coords" rows="6" spellcheck="false"></textarea>
     <div class="row" style="margin-top:6px">
       <button id="sample">ตัวอย่าง</button>
+      <button id="importBtn" title="CSV ที่มีคอลัมน์ lat,lon">📂 CSV</button>
+      <input id="importFile" type="file" accept=".csv,.txt,text/csv" hidden>
       <button id="undo">↶ ลบจุดท้าย</button>
       <button id="clear">ล้าง</button>
     </div>
@@ -171,6 +172,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="csv-import.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 
@@ -251,6 +253,30 @@ $('sample').onclick = () => {
   map.fitBounds(points.map(([lon, lat]) => [lat, lon]), { padding: [40, 40] });
 };
 $('undo').onclick = () => { points.pop(); writeCoords(); };
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const { points: rows, skipped, swapped } = await readLatLonCsvFile(file);
+    points = rows.map(([lat, lon]) => [lon, lat]);
+    const max = SERVICES[service].max;
+    if (max) points = points.slice(0, max);
+    writeCoords();
+    resultLayer.clearLayers();
+    map.fitBounds(points.map(toLatLng), { padding: [40, 40] });
+    const notes = [`Import ${points.length} จุดจาก ${esc(file.name)}`];
+    if (skipped) notes.push(`ข้าม ${skipped} แถวที่อ่านไม่ได้`);
+    if (swapped) notes.push('สลับคอลัมน์ให้แล้ว (ไฟล์เป็น lon,lat)');
+    if (max && rows.length > max) notes.push(`service ${service} ใช้แค่ ${max} จุดแรก`);
+    $('pane-summary').innerHTML = `<p>${notes.join(' · ')}</p>`;
+    showTab('summary');
+  } catch (err) {
+    showError('Import ไม่สำเร็จ: ' + esc(err.message));
+  }
+};
 $('clear').onclick = () => { points = []; writeCoords(); resultLayer.clearLayers(); };
 
 // ---------- service / server ----------
@@ -327,7 +353,7 @@ async function send() {
     setBadge('ERR', false);
     $('timing').textContent = '';
     $('json').textContent = String(err);
-    showError(`เชื่อมต่อ server ไม่ได้ (${err.message}) ถ้าใช้ localhost ตรวจว่ารัน <code>docker compose up -d</code> แล้ว`);
+    showError(`เชื่อมต่อ server ไม่ได้ (${err.message}) ตรวจ URL ของ server และ CORS`);
   } finally {
     $('send').disabled = false;
   }
@@ -369,6 +395,7 @@ function legsTable(legs) {
   if (!legs?.length) return '';
   return `<table class="res"><tr><th>leg</th><th>distance</th><th>duration</th><th>summary</th></tr>` +
     legs.map((l, i) => `<tr><td>${i + 1}</td><td>${km(l.distance)}</td><td>${mins(l.duration)}</td><td style="text-align:left">${esc(l.summary || '')}</td></tr>`).join('') +
+    `<tr><th>รวม</th><th>${km(legs.reduce((s, l) => s + l.distance, 0))}</th><th>${mins(legs.reduce((s, l) => s + l.duration, 0))}</th><th></th></tr>` +
     '</table>';
 }
 

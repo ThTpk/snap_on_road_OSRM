@@ -4,8 +4,18 @@ Web tools for turning clicked GPS points into road-following routes with [OSRM](
 
 | Page | Description |
 |---|---|
-| [`index.html`](index.html): **Route Builder** | Click points on the map, then route (`/route`) or map-match (`/match`) them along roads and export the resulting coordinates as CSV |
-| [`api-test.html`](api-test.html): **OSRM API Tester** | Playground for the `route`, `match`, `nearest`, `table` and `trip` services: edit coordinates and query params, view the summary, map overlay and raw JSON, and copy the URL or curl command |
+| [`index.html`](index.html): **Route Builder** | Click points on the map, then route (`/route`) or map-match (`/match`) them along roads and export the resulting coordinates as CSV. Points can also be imported from a CSV file |
+| [`api-test.html`](api-test.html): **OSRM API Tester** | Playground for the `route`, `match`, `nearest`, `table` and `trip` services: edit or import coordinates and query params, view the summary, map overlay and raw JSON, and copy the URL or curl command |
+
+### CSV import format
+
+A header row is optional. With a header, the columns are found by name (`lat`/`latitude` and `lon`/`lng`/`longitude`); without one, column 1 = lat and column 2 = lon. Comma, semicolon and tab delimiters all work, and files exported by the Route Builder can be imported again.
+
+```csv
+lat,lon
+13.756300,100.501800
+13.746600,100.534100
+```
 
 Both pages are static HTML (Leaflet + OpenStreetMap tiles), so they can be served directly from **GitHub Pages**.
 
@@ -21,22 +31,12 @@ swap=16GB
 
 ```powershell
 .\osrm-build.ps1          # download thailand-latest.osm.pbf, filter roads, extract/partition/customize (car)
-docker compose up -d      # start OSRM at http://localhost:5000
+docker compose up -d      # start OSRM on port 5000
 ```
 
 - Other profiles: `.\osrm-build.ps1 -Profile bicycle` or `-Profile foot`. One server serves one profile, and the profile name in the URL is ignored.
 - Update the map data: `.\osrm-build.ps1 -Download`, then `docker compose restart`.
-- The local server allows up to 1000 points per `/match` and `/route` request (public servers allow 100).
-
-Quick test:
-
-```bash
-curl "http://localhost:5000/route/v1/driving/100.5018,13.7563;100.5606,13.7376?overview=false"
-```
-
-## Using the GitHub Pages site with localhost
-
-The pages can call `http://localhost:5000` even when opened from `https://<user>.github.io/...`, because browsers treat `localhost` as a trusted origin. Recent Chrome versions may ask for permission to access the **local network** the first time; allow it.
+- The self-hosted server allows up to 1000 points per `/match` and `/route` request (public servers allow 100). Use it from the API Tester via **Server → Custom…**.
 
 ## Data & licences
 
