@@ -1,0 +1,10 @@
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: osrm-thailand
+    command: osrm-routed --algorithm mld --max-matching-size 1000 --max-viaroute-size 1000 /data/thailand.osrm
+    volumes:
+      - ./osrm-data:/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped

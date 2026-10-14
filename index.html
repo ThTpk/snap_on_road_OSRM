@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPS Route Builder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085;
+    --border: #e3e6eb; --accent: #2563eb; --accent-text: #fff; --danger: #dc2626;
+    --route: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #98a2b3;
+      --border: #2c323d; --accent: #4f8cff; --danger: #f87171; --route: #4f8cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+    display: grid; grid-template-columns: 340px 1fr; height: 100vh;
+  }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  .hint { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], input[type=number] {
+    width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button {
+    padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  #status { font-size: 13px; min-height: 1.5em; color: var(--muted); }
+  #status.err { color: var(--danger); }
+  ol#points { margin: 0; padding-left: 22px; max-height: 220px; overflow-y: auto;
+    font-variant-numeric: tabular-nums; font-size: 13px; }
+  ol#points li { padding: 2px 0; display: flex; justify-content: space-between; gap: 6px; }
+  ol#points li button { padding: 0 6px; font-size: 12px; }
+  #map { height: 100vh; }
+  .pin {
+    background: var(--accent); color: #fff; border: 2px solid #fff; border-radius: 50%;
+    width: 24px; height: 24px; display: grid; place-items: center;
+    font-size: 12px; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+  .pin.start { background: #16a34a; }
+  .pin.end { background: #dc2626; }
+  @media (max-width: 760px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 55vh auto; height: auto; }
+    #map { height: 55vh; grid-row: 1; }
+    aside { grid-row: 2; border-right: 0; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <div>
+    <h1>GPS Route Builder</h1>
+    <p class="hint"><a href="api-test.html" style="color:var(--accent)">OSRM API Tester →</a></p>
+    <p class="hint">คลิกบนแผนที่เพื่อเพิ่มจุด · ลากหมุดเพื่อย้าย · คลิกขวาที่หมุดเพื่อลบ</p>
+  </div>
+
+  <div>
+    <label for="mode">โหมด OSRM</label>
+    <select id="mode">
+      <option value="route">Route: หาเส้นทางผ่านจุดตามลำดับ</option>
+      <option value="match">Match: map matching (snap จุด GPS เข้าถนน)</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="profile">ประเภท</label>
+      <select id="profile">
+        <option value="driving">รถยนต์</option>
+        <option value="cycling">จักรยาน</option>
+        <option value="walking">เดิน</option>
+      </select>
+    </div>
+    <div id="radiusWrap">
+      <label for="radius">รัศมี match (m)</label>
+      <input id="radius" type="number" min="1" max="100" value="30">
+    </div>
+  </div>
+
+  <div>
+    <label for="server">OSRM server</label>
+    <select id="server">
+      <option value="https://router.project-osrm.org">router.project-osrm.org (demo, รถยนต์เท่านั้น)</option>
+      <option value="https://routing.openstreetmap.de/routed-{profile}">routing.openstreetmap.de (รถ/จักรยาน/เดิน)</option>
+      <option value="http://localhost:5000">localhost:5000 (self-host)</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <button id="undo">↶ ย้อนกลับ</button>
+    <button id="clear" class="danger">ล้างทั้งหมด</button>
+  </div>
+
+  <div id="status">ยังไม่มีจุด</div>
+
+  <div class="stats">
+    <div class="stat"><b id="sDist">–</b><span>ระยะทาง</span></div>
+    <div class="stat"><b id="sTime">–</b><span>เวลาโดยประมาณ</span></div>
+    <div class="stat"><b id="sIn">0</b><span>จุดที่คลิก</span></div>
+    <div class="stat"><b id="sOut">0</b><span>จุดบนเส้นทาง</span></div>
+  </div>
+
+  <div class="row">
+    <button id="exportRoute" class="primary" disabled>Export เส้นทาง CSV</button>
+    <button id="exportInput" disabled>Export จุดที่คลิก CSV</button>
+  </div>
+
+  <div>
+    <label>จุดที่คลิก (lat, lon)</label>
+    <ol id="points"></ol>
+  </div>
+</aside>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+const map = L.map('map').setView([13.7563, 100.5018], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors · Routing &copy; OSRM'
+}).addTo(map);
+
+let points = [];        // [{lat, lng, marker}]
+let routeCoords = [];   // [[lat, lon], ...] from OSRM
+let routeLayer = null;
+let reqId = 0;
+let timer = null;
+
+// ---------- points ----------
+function addPoint(latlng) {
+  const marker = L.marker(latlng, { draggable: true }).addTo(map);
+  const p = { lat: latlng.lat, lng: latlng.lng, marker };
+  marker.on('dragend', e => {
+    const ll = e.target.getLatLng();
+    p.lat = ll.lat; p.lng = ll.lng;
+    refresh();
+  });
+  marker.on('contextmenu', () => removePoint(p));
+  points.push(p);
+  refresh();
+}
+
+function removePoint(p) {
+  map.removeLayer(p.marker);
+  points = points.filter(x => x !== p);
+  refresh();
+}
+
+function refresh() {
+  points.forEach((p, i) => {
+    const cls = i === 0 ? 'start' : (i === points.length - 1 && points.length > 1 ? 'end' : '');
+    p.marker.setIcon(L.divIcon({
+      className: '', html: `<div class="pin ${cls}">${i + 1}</div>`,
+      iconSize: [24, 24], iconAnchor: [12, 12]
+    }));
+  });
+  $('sIn').textContent = points.length;
+  $('exportInput').disabled = points.length === 0;
+  $('points').innerHTML = points.map((p, i) =>
+    `<li><span>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</span><button data-i="${i}" title="ลบ">✕</button></li>`
+  ).join('');
+  scheduleRoute();
+}
+
+$('points').addEventListener('click', e => {
+  const i = e.target.dataset.i;
+  if (i !== undefined) removePoint(points[+i]);
+});
+
+map.on('click', e => addPoint(e.latlng));
+$('undo').onclick = () => points.length && removePoint(points[points.length - 1]);
+$('clear').onclick = () => { points.forEach(p => map.removeLayer(p.marker)); points = []; refresh(); };
+['mode', 'profile', 'radius', 'server'].forEach(id => $(id).addEventListener('change', () => {
+  $('radiusWrap').style.visibility = $('mode').value === 'match' ? 'visible' : 'hidden';
+  scheduleRoute();
+}));
+$('radiusWrap').style.visibility = 'hidden';
+
+// ---------- OSRM ----------
+function scheduleRoute() {
+  clearTimeout(timer);
+  timer = setTimeout(fetchRoute, 250);
+}
+
+function setStatus(msg, err = false) {
+  $('status').textContent = msg;
+  $('status').className = err ? 'err' : '';
+}
+
+function clearRoute() {
+  if (routeLayer) map.removeLayer(routeLayer);
+  routeLayer = null;
+  routeCoords = [];
+  $('sDist').textContent = '–';
+  $('sTime').textContent = '–';
+  $('sOut').textContent = 0;
+  $('exportRoute').disabled = true;
+}
+
+function buildUrl() {
+  const mode = $('mode').value;
+  const profile = $('profile').value;
+  const coords = points.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+  let base = $('server').value;
+  // routing.openstreetmap.de uses a separate server per profile
+  const osmdeProfile = { driving: 'car', cycling: 'bike', walking: 'foot' }[profile];
+  base = base.replace('{profile}', osmdeProfile);
+  const params = new URLSearchParams({ geometries: 'geojson', overview: 'full' });
+  if (mode === 'match') {
+    const r = Math.max(1, Math.min(100, +$('radius').value || 30));
+    params.set('radiuses', points.map(() => r).join(';'));
+    params.set('gaps', 'ignore');
+  }
+  return `${base}/${mode}/v1/${profile}/${coords}?${params}`;
+}
+
+async function fetchRoute() {
+  if (points.length < 2) {
+    clearRoute();
+    setStatus(points.length ? 'คลิกเพิ่มอีกอย่างน้อย 1 จุด' : 'ยังไม่มีจุด');
+    return;
+  }
+  // public servers cap /match at 100 coords; local docker-compose raises it to 1000
+  const maxMatch = $('server').value.includes('localhost') ? 1000 : 100;
+  if ($('mode').value === 'match' && points.length > maxMatch) {
+    setStatus(`โหมด match รองรับสูงสุด ${maxMatch} จุดต่อ request`, true);
+    return;
+  }
+  const id = ++reqId;
+  setStatus('กำลังคำนวณเส้นทาง…');
+  try {
+    const res = await fetch(buildUrl());
+    const data = await res.json();
+    if (id !== reqId) return; // a newer request is in flight
+    if (data.code !== 'Ok') throw new Error(data.message || data.code);
+
+    const legs = data.routes || data.matchings;
+    // OSRM repeats the shared point at leg boundaries; drop consecutive duplicates
+    routeCoords = legs.flatMap(r => r.geometry.coordinates.map(([lon, lat]) => [lat, lon]))
+      .filter((c, i, a) => i === 0 || c[0] !== a[i - 1][0] || c[1] !== a[i - 1][1]);
+    const dist = legs.reduce((s, r) => s + r.distance, 0);
+    const dur = legs.reduce((s, r) => s + r.duration, 0);
+
+    if (routeLayer) map.removeLayer(routeLayer);
+    routeLayer = L.polyline(routeCoords, {
+      color: getComputedStyle(document.documentElement).getPropertyValue('--route').trim(),
+      weight: 5, opacity: .85
+    }).addTo(map);
+
+    $('sDist').textContent = dist >= 1000 ? (dist / 1000).toFixed(2) + ' km' : Math.round(dist) + ' m';
+    $('sTime').textContent = fmtDuration(dur);
+    $('sOut').textContent = routeCoords.length;
+    $('exportRoute').disabled = false;
+
+    const note = data.matchings && data.matchings.length > 1
+      ? ` (แยกเป็น ${data.matchings.length} ช่วง เพราะบางจุดต่อกันไม่ได้)` : '';
+    setStatus('เส้นทางพร้อมแล้ว' + note);
+  } catch (err) {
+    if (id !== reqId) return;
+    clearRoute();
+    setStatus('OSRM error: ' + err.message, true);
+  }
+}
+
+function fmtDuration(s) {
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h ? `${h} ชม. ${m} นาที` : `${m} นาที`;
+}
+
+// ---------- CSV export ----------
+function haversine([lat1, lon1], [lat2, lon2]) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function download(name, rows) {
+  const csv = '﻿' + rows.map(r => r.join(',')).join('\r\n'); // BOM for Excel
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function stamp() {
+  return new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+}
+
+$('exportRoute').onclick = () => {
+  let cum = 0;
+  const rows = [['seq', 'lat', 'lon', 'cum_distance_m']];
+  routeCoords.forEach((c, i) => {
+    if (i) cum += haversine(routeCoords[i - 1], c);
+    rows.push([i + 1, c[0].toFixed(6), c[1].toFixed(6), cum.toFixed(1)]);
+  });
+  download(`route_${$('mode').value}_${stamp()}.csv`, rows);
+};
+
+$('exportInput').onclick = () => {
+  const rows = [['seq', 'lat', 'lon']];
+  points.forEach((p, i) => rows.push([i + 1, p.lat.toFixed(6), p.lng.toFixed(6)]));
+  download(`input_points_${stamp()}.csv`, rows);
+};
+</script>
+</body>
+</html>

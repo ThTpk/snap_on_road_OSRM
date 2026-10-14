@@ -1,0 +1,4 @@
+# OSM extracts and OSRM build output (hundreds of MB; rebuild with osrm-build.ps1)
+osrm-data/
+*.osm.pbf
+*.osrm*

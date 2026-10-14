@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSRM API Tester</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085;
+    --border: #e3e6eb; --accent: #2563eb; --accent-text: #fff; --danger: #dc2626;
+    --ok: #16a34a; --code: #f1f3f6; --route: #2563eb; --alt: #94a3b8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #98a2b3;
+      --border: #2c323d; --accent: #4f8cff; --danger: #f87171; --ok: #4ade80;
+      --code: #151920; --route: #4f8cff; --alt: #64748b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+    display: grid; grid-template-columns: 380px 1fr; height: 100vh;
+  }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  h1 { font-size: 18px; margin: 0; }
+  a { color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], textarea {
+    width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; min-width: 0; }
+  button {
+    padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .services { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .services button { padding: 6px 0; font-size: 13px; }
+  .services button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  #svcDesc { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.5; }
+  main { display: grid; grid-template-rows: 1fr 1fr; min-height: 0; }
+  #map { min-height: 0; }
+  .out { border-top: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .bar {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); font-size: 13px; flex-wrap: wrap;
+  }
+  .bar .url {
+    flex: 1; min-width: 200px; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+  }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+  .badge.ok { color: var(--ok); } .badge.err { color: var(--danger); }
+  .tabs button { padding: 4px 10px; font-size: 12px; }
+  .tabs button.on { border-color: var(--accent); color: var(--accent); }
+  .pane { flex: 1; overflow: auto; padding: 12px; min-height: 0; }
+  pre { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  table.res { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+  table.res th, table.res td { border: 1px solid var(--border); padding: 4px 8px; text-align: right; }
+  table.res th { background: var(--code); color: var(--muted); font-weight: 500; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13px; margin-bottom: 12px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .pin {
+    background: var(--accent); color: #fff; border: 2px solid #fff; border-radius: 50%;
+    width: 22px; height: 22px; display: grid; place-items: center;
+    font-size: 11px; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+  .empty { color: var(--muted); }
+  @media (max-width: 860px) {
+    body { grid-template-columns: 1fr; height: auto; }
+    main { grid-template-rows: 50vh auto; }
+    .out { min-height: 50vh; }
+    aside { border-right: 0; border-bottom: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1>OSRM API Tester</h1>
+    <a href="index.html">Route Builder →</a>
+  </header>
+
+  <div>
+    <label for="server">Server</label>
+    <select id="server">
+      <option value="http://localhost:5000">localhost:5000 (self-host)</option>
+      <option value="https://router.project-osrm.org">router.project-osrm.org (demo)</option>
+      <option value="https://routing.openstreetmap.de/routed-car">routing.openstreetmap.de/routed-car</option>
+      <option value="https://routing.openstreetmap.de/routed-bike">routing.openstreetmap.de/routed-bike</option>
+      <option value="https://routing.openstreetmap.de/routed-foot">routing.openstreetmap.de/routed-foot</option>
+      <option value="custom">Custom…</option>
+    </select>
+    <input id="customServer" type="text" placeholder="https://your-osrm-server" style="display:none;margin-top:6px">
+  </div>
+
+  <div>
+    <label>Service</label>
+    <div class="services" id="services"></div>
+    <p id="svcDesc"></p>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="profile">Profile</label>
+      <select id="profile">
+        <option>driving</option><option>car</option><option>cycling</option><option>walking</option>
+      </select>
+    </div>
+    <div>
+      <label for="format">Coordinate input</label>
+      <select id="format">
+        <option value="lonlat">lon,lat (OSRM)</option>
+        <option value="latlon">lat,lon (Google)</option>
+      </select>
+    </div>
+  </div>
+
+  <div>
+    <label for="coords">Coordinates: 1 จุดต่อบรรทัด หรือคลิกบนแผนที่</label>
+    <textarea id="coords" rows="6" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="sample">ตัวอย่าง</button>
+      <button id="undo">↶ ลบจุดท้าย</button>
+      <button id="clear">ล้าง</button>
+    </div>
+  </div>
+
+  <div>
+    <label for="params">Query parameters (key=value ต่อบรรทัด)</label>
+    <textarea id="params" rows="6" spellcheck="false"></textarea>
+    <p class="hint">เปลี่ยน service แล้วค่าจะรีเซ็ตเป็นค่าเริ่มต้น · ใส่ <code>radiuses=auto</code> ใน match เพื่อสร้างค่ารัศมีทุกจุดอัตโนมัติ</p>
+  </div>
+
+  <button id="send" class="primary">ส่ง request (Ctrl+Enter)</button>
+  <div class="row">
+    <button id="copyUrl">Copy URL</button>
+    <button id="copyCurl">Copy curl</button>
+  </div>
+</aside>
+
+<main>
+  <div id="map"></div>
+  <section class="out">
+    <div class="bar">
+      <span id="badge" class="badge" style="display:none"></span>
+      <span id="timing"></span>
+      <span class="url" id="urlShow">ยังไม่ได้ส่ง request</span>
+      <span class="tabs">
+        <button data-tab="summary" class="on">Summary</button>
+        <button data-tab="json">JSON</button>
+      </span>
+    </div>
+    <div class="pane" id="pane-summary"><p class="empty">ผลลัพธ์จะแสดงที่นี่</p></div>
+    <div class="pane" id="pane-json" style="display:none"><pre id="json"></pre></div>
+  </section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+const SERVICES = {
+  route:   { desc: 'หาเส้นทางที่เร็วที่สุดผ่านทุกจุดตามลำดับ (≥ 2 จุด)', min: 2,
+             params: 'overview=full\ngeometries=geojson\nsteps=false\nalternatives=false\nannotations=false' },
+  match:   { desc: 'Map matching: snap จุด GPS ที่มี noise เข้ากับถนนที่น่าจะวิ่งจริง (≥ 2 จุด)', min: 2,
+             params: 'overview=full\ngeometries=geojson\nradiuses=auto\ngaps=split\ntidy=false' },
+  nearest: { desc: 'หาจุดบนถนนที่ใกล้ที่สุดกับพิกัด (1 จุด)', min: 1, max: 1,
+             params: 'number=3' },
+  table:   { desc: 'Matrix เวลาเดินทาง/ระยะทางระหว่างทุกคู่จุด (≥ 2 จุด)', min: 2,
+             params: 'annotations=duration,distance' },
+  trip:    { desc: 'แก้ปัญหา TSP: หาลำดับการเยี่ยมทุกจุดที่สั้นที่สุด (≥ 2 จุด)', min: 2,
+             params: 'roundtrip=true\nsource=first\ndestination=any\noverview=full\ngeometries=geojson' },
+};
+const SAMPLE = [[100.5018, 13.7563], [100.5341, 13.7466], [100.5606, 13.7376], [100.5231, 13.7287]];
+
+let service = 'route';
+let points = [];           // [[lon, lat]]
+let lastUrl = '';
+
+// ---------- map ----------
+const map = L.map('map').setView([13.7563, 100.5018], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+const inputLayer = L.layerGroup().addTo(map);
+const resultLayer = L.layerGroup().addTo(map);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+map.on('click', e => {
+  const p = [+e.latlng.lng.toFixed(6), +e.latlng.lat.toFixed(6)];
+  const max = SERVICES[service].max;
+  if (max && points.length >= max) points = points.slice(0, max - 1);
+  points.push(p);
+  writeCoords();
+});
+
+function drawInputs() {
+  inputLayer.clearLayers();
+  points.forEach(([lon, lat], i) => {
+    const m = L.marker([lat, lon], {
+      draggable: true,
+      icon: L.divIcon({ className: '', html: `<div class="pin">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] })
+    }).addTo(inputLayer);
+    m.on('dragend', () => {
+      const ll = m.getLatLng();
+      points[i] = [+ll.lng.toFixed(6), +ll.lat.toFixed(6)];
+      writeCoords();
+    });
+  });
+}
+
+// ---------- coordinates textarea <-> points ----------
+function writeCoords() {
+  const latFirst = $('format').value === 'latlon';
+  $('coords').value = points.map(([lon, lat]) => latFirst ? `${lat},${lon}` : `${lon},${lat}`).join('\n');
+  drawInputs();
+}
+
+function readCoords() {
+  const latFirst = $('format').value === 'latlon';
+  const out = [];
+  for (const line of $('coords').value.split(/[\n;]+/)) {
+    const nums = line.trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    if (nums.length !== 2 || nums.some(isNaN)) continue;
+    out.push(latFirst ? [nums[1], nums[0]] : nums);
+  }
+  points = out;
+  drawInputs();
+}
+$('coords').addEventListener('input', readCoords);
+$('format').addEventListener('change', writeCoords);
+
+$('sample').onclick = () => {
+  points = SERVICES[service].max === 1 ? SAMPLE.slice(0, 1) : SAMPLE.map(p => [...p]);
+  writeCoords();
+  map.fitBounds(points.map(([lon, lat]) => [lat, lon]), { padding: [40, 40] });
+};
+$('undo').onclick = () => { points.pop(); writeCoords(); };
+$('clear').onclick = () => { points = []; writeCoords(); resultLayer.clearLayers(); };
+
+// ---------- service / server ----------
+const svcWrap = $('services');
+Object.keys(SERVICES).forEach(name => {
+  const b = document.createElement('button');
+  b.textContent = name;
+  b.onclick = () => selectService(name);
+  svcWrap.appendChild(b);
+});
+
+function selectService(name) {
+  service = name;
+  [...svcWrap.children].forEach(b => b.classList.toggle('on', b.textContent === name));
+  $('svcDesc').textContent = SERVICES[name].desc;
+  $('params').value = SERVICES[name].params;
+  const max = SERVICES[name].max;
+  if (max && points.length > max) { points = points.slice(0, max); writeCoords(); }
+}
+selectService('route');
+
+$('server').addEventListener('change', () => {
+  $('customServer').style.display = $('server').value === 'custom' ? '' : 'none';
+});
+
+function serverBase() {
+  const v = $('server').value === 'custom' ? $('customServer').value.trim() : $('server').value;
+  return v.replace(/\/+$/, '');
+}
+
+// ---------- request ----------
+function buildUrl() {
+  const params = new URLSearchParams();
+  for (const line of $('params').value.split('\n')) {
+    const i = line.indexOf('=');
+    if (i < 1) continue;
+    const k = line.slice(0, i).trim();
+    let v = line.slice(i + 1).trim();
+    if (k === 'radiuses' && v === 'auto') v = points.map(() => 30).join(';');
+    params.append(k, v);
+  }
+  const coords = points.map(([lon, lat]) => `${lon},${lat}`).join(';');
+  const qs = params.toString().replace(/%2C/g, ',').replace(/%3B/g, ';');
+  return `${serverBase()}/${service}/v1/${$('profile').value}/${coords}${qs ? '?' + qs : ''}`;
+}
+
+async function send() {
+  const svc = SERVICES[service];
+  if (points.length < svc.min) return showError(`service "${service}" ต้องมีอย่างน้อย ${svc.min} จุด`);
+  if (!serverBase()) return showError('กรุณาใส่ server URL');
+
+  lastUrl = buildUrl();
+  $('urlShow').textContent = lastUrl;
+  $('urlShow').title = lastUrl;
+  $('send').disabled = true;
+  $('timing').textContent = 'กำลังส่ง…';
+  resultLayer.clearLayers();
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(lastUrl);
+    const ms = Math.round(performance.now() - t0);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = null; }
+
+    setBadge(res.status, data && data.code === 'Ok');
+    $('timing').textContent = `${ms} ms · ${(text.length / 1024).toFixed(1)} KB`;
+    $('json').textContent = data ? JSON.stringify(data, null, 2) : text;
+
+    if (data && data.code === 'Ok') renderResult(data);
+    else $('pane-summary').innerHTML = `<p style="color:var(--danger)"><b>${esc(data?.code || 'Error')}</b>: ${esc(data?.message || text.slice(0, 300))}</p>`;
+  } catch (err) {
+    setBadge('ERR', false);
+    $('timing').textContent = '';
+    $('json').textContent = String(err);
+    showError(`เชื่อมต่อ server ไม่ได้ (${err.message}) ถ้าใช้ localhost ตรวจว่ารัน <code>docker compose up -d</code> แล้ว`);
+  } finally {
+    $('send').disabled = false;
+  }
+}
+
+function setBadge(status, ok) {
+  const b = $('badge');
+  b.style.display = '';
+  b.textContent = status;
+  b.className = 'badge ' + (ok ? 'ok' : 'err');
+}
+
+function showError(html) {
+  $('pane-summary').innerHTML = `<p style="color:var(--danger)">${html}</p>`;
+  showTab('summary');
+}
+
+// ---------- render ----------
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const km = m => m == null ? '–' : (m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m');
+const mins = s => s == null ? '–' : (s >= 3600 ? `${Math.floor(s / 3600)} ชม. ${Math.round(s % 3600 / 60)} นาที` : `${(s / 60).toFixed(1)} นาที`);
+const toLatLng = ([lon, lat]) => [lat, lon];
+
+function drawGeometry(geom, color, weight = 5) {
+  if (!geom || typeof geom === 'string') return null; // polyline-encoded: not drawn
+  return L.polyline(geom.coordinates.map(toLatLng), { color, weight, opacity: .85 }).addTo(resultLayer);
+}
+
+function drawSnapped(wps) {
+  (wps || []).forEach((w, i) => {
+    if (!w) return;
+    L.circleMarker(toLatLng(w.location), { radius: 5, color: css('--ok'), weight: 2, fillOpacity: 1, fillColor: '#fff' })
+      .bindTooltip(`snapped #${i + 1}${w.name ? ' · ' + esc(w.name) : ''} · ${w.distance?.toFixed(1)} m`)
+      .addTo(resultLayer);
+  });
+}
+
+function legsTable(legs) {
+  if (!legs?.length) return '';
+  return `<table class="res"><tr><th>leg</th><th>distance</th><th>duration</th><th>summary</th></tr>` +
+    legs.map((l, i) => `<tr><td>${i + 1}</td><td>${km(l.distance)}</td><td>${mins(l.duration)}</td><td style="text-align:left">${esc(l.summary || '')}</td></tr>`).join('') +
+    '</table>';
+}
+
+function renderResult(d) {
+  let html = '';
+  const fit = [];
+
+  if (service === 'route' || service === 'trip') {
+    const list = d.routes || d.trips;
+    list.slice().reverse().forEach((r, ri) => {
+      const isMain = ri === list.length - 1;
+      const pl = drawGeometry(r.geometry, isMain ? css('--route') : css('--alt'), isMain ? 6 : 4);
+      if (pl && isMain) fit.push(pl.getBounds());
+    });
+    drawSnapped(d.waypoints);
+    list.forEach((r, i) => {
+      html += `<dl class="kv"><dt>${service === 'trip' ? 'trip' : (i ? 'alternative ' + i : 'route')}</dt><dd><b>${km(r.distance)}</b> · ${mins(r.duration)}</dd></dl>`;
+      html += legsTable(r.legs);
+    });
+    if (service === 'trip') {
+      const order = d.waypoints.map((w, i) => ({ i: i + 1, k: w.waypoint_index })).sort((a, b) => a.k - b.k).map(x => x.i);
+      html = `<dl class="kv"><dt>ลำดับที่ดีที่สุด</dt><dd>${order.join(' → ')}${$('params').value.includes('roundtrip=false') ? '' : ' → ' + order[0]}</dd></dl>` + html;
+    }
+  }
+
+  if (service === 'match') {
+    d.matchings.forEach((m, i) => {
+      const pl = drawGeometry(m.geometry, css('--route'));
+      if (pl) fit.push(pl.getBounds());
+      html += `<dl class="kv"><dt>matching ${i + 1}</dt><dd><b>${km(m.distance)}</b> · ${mins(m.duration)} · confidence ${(m.confidence * 100).toFixed(1)}%</dd></dl>`;
+    });
+    drawSnapped(d.tracepoints);
+    const lost = d.tracepoints.filter(t => !t).length;
+    if (lost) html += `<p style="color:var(--danger)">${lost} จุด match กับถนนไม่ได้ (tracepoint = null)</p>`;
+  }
+
+  if (service === 'nearest') {
+    const [olon, olat] = points[0];
+    html += `<table class="res"><tr><th>#</th><th>ถนน</th><th>ห่าง</th><th>lat, lon</th></tr>`;
+    d.waypoints.forEach((w, i) => {
+      L.polyline([[olat, olon], toLatLng(w.location)], { color: css('--alt'), dashArray: '4 4', weight: 2 }).addTo(resultLayer);
+      L.circleMarker(toLatLng(w.location), { radius: 6, color: css('--ok'), fillOpacity: 1, fillColor: '#fff', weight: 3 })
+        .bindTooltip(`#${i + 1} ${esc(w.name || '(ไม่มีชื่อ)')}`).addTo(resultLayer);
+      html += `<tr><td>${i + 1}</td><td style="text-align:left">${esc(w.name || '(ไม่มีชื่อ)')}</td><td>${w.distance.toFixed(1)} m</td><td>${w.location[1].toFixed(6)}, ${w.location[0].toFixed(6)}</td></tr>`;
+    });
+    html += '</table>';
+  }
+
+  if (service === 'table') {
+    drawSnapped(d.sources);
+    const matrix = (title, m, fmt) => !m ? '' :
+      `<p><b>${title}</b></p><table class="res"><tr><th>จาก \\ ไป</th>${m[0].map((_, j) => `<th>${j + 1}</th>`).join('')}</tr>` +
+      m.map((row, i) => `<tr><th>${i + 1}</th>${row.map(v => `<td>${v == null ? '–' : fmt(v)}</td>`).join('')}</tr>`).join('') + '</table>';
+    html += matrix('Duration', d.durations, mins) + matrix('Distance', d.distances, km);
+  }
+
+  $('pane-summary').innerHTML = html || '<p class="empty">ไม่มีข้อมูลสรุป ดูแท็บ JSON</p>';
+  if (fit.length) map.fitBounds(fit.reduce((a, b) => a.extend(b)), { padding: [30, 30] });
+}
+
+// ---------- tabs, copy, shortcuts ----------
+function showTab(name) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  $('pane-summary').style.display = name === 'summary' ? '' : 'none';
+  $('pane-json').style.display = name === 'json' ? '' : 'none';
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+async function copy(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const t = btn.textContent; btn.textContent = 'Copied ✓';
+    setTimeout(() => btn.textContent = t, 1200);
+  } catch { prompt('Copy:', text); }
+}
+$('copyUrl').onclick = e => copy(buildUrl(), e.target);
+$('copyCurl').onclick = e => copy(`curl "${buildUrl()}"`, e.target);
+$('send').onclick = send;
+document.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') send(); });
+</script>
+</body>
+</html>
